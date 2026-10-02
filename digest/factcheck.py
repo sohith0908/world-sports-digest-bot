@@ -112,8 +112,13 @@ def factcheck_summary(article: Article, summary: Summary) -> tuple[Summary | Non
         competition=summary.competition,
     )
 
+    # Quality path: AI fact-check when scores/numbers/sensitive claims appear.
     claim_blob = f"{headline} {key_fact} {why or ''}"
-    needs_ai = bool(NEEDS_AI_FACTCHECK.search(claim_blob) or SENSITIVE.search(claim_blob) or flags)
+    needs_ai = bool(
+        flags
+        or SENSITIVE.search(claim_blob)
+        or NEEDS_AI_FACTCHECK.search(claim_blob)
+    )
     if needs_ai:
         result = ai_factcheck(article, checked)
         if result is None:
@@ -121,9 +126,7 @@ def factcheck_summary(article: Article, summary: Summary) -> tuple[Summary | Non
         else:
             verdict, unsupported = result
     else:
-        # Fast path: no scores/sensitive claims — local lexical check only.
         verdict, unsupported = local_factcheck(article, checked)
-        log.debug("factcheck_fast_path url=%s", article.url)
 
     log.info(
         "factcheck url=%s verdict=%s unsupported=%s flags=%s",

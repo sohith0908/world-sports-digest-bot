@@ -79,11 +79,16 @@ def build_digest(
         review_items = []
         human_review = get_settings().require_human_review
 
-        note(f"Summarizing {len(candidates)} stories…")
+        total = len(candidates)
+        note(f"Summarizing {total} stories…")
+        done = 0
         with ThreadPoolExecutor(max_workers=4) as pool:
             futures = [pool.submit(_summarize_one, article, human_review) for article in candidates]
             for fut in as_completed(futures):
                 article, summary, flags, reason, _ = fut.result()
+                done += 1
+                if done == 1 or done == total or done % 3 == 0:
+                    note(f"Summarizing… {done}/{total}")
                 if summary is None:
                     skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
                     continue

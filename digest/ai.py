@@ -167,7 +167,7 @@ def call_gemini_raw(
     }
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
     last_error: Exception | None = None
-    with httpx.Client(timeout=30.0) as client:
+    with httpx.Client(timeout=25.0) as client:
         for model in models:
             url = (
                 "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -255,15 +255,15 @@ def summarize_article(article: Article) -> tuple[Summary | None, list[str], str]
         )
         return factcheck_summary(article, summary)
 
+    # Quality path: Gemini first; local only as fallback.
     prompt = _user_payload(article)
-    gemini = os.getenv("GEMINI_API_KEY", "").strip()
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-    openai_base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
-
+    gemini = get_settings().gemini_api_key or os.getenv("GEMINI_API_KEY", "").strip()
+    openai_key = get_settings().openai_api_key or os.getenv("OPENAI_API_KEY", "").strip()
+    openai_base = get_settings().openai_base_url
     summary = None
     try:
         if gemini:
-            raw = call_gemini_raw(prompt, gemini, system_prompt=SYSTEM_PROMPT)
+            raw = call_gemini_raw(prompt, gemini, system_prompt=SYSTEM_PROMPT, max_tokens=700)
             summary = parse_summary(raw, article)
         elif openai_key:
             raw = call_openai_raw(prompt, openai_key, openai_base, system_prompt=SYSTEM_PROMPT)

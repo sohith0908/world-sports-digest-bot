@@ -33,7 +33,7 @@ REGION_SPORTS = {
     "americas": {"NBA", "NFL", "MLB", "MMA"},
 }
 
-# Candidates per sport before AI — keep breadth worldwide.
+# Candidates per sport before AI — quality/breadth first (speed later).
 CANDIDATE_CAPS: dict[str, int] = {
     "Asian Games": 4,
     "Football": 3,
@@ -48,6 +48,8 @@ CANDIDATE_CAPS: dict[str, int] = {
     "Athletics": 2,
     "Other": 2,
 }
+MAX_AI_CANDIDATES = 24
+DEFAULT_CANDIDATE_CAP = 2
 FINAL_CAPS: dict[str, int] = {
     "Asian Games": 3,
     "Football": 2,
@@ -67,9 +69,9 @@ FINAL_CAPS: dict[str, int] = {
     "MLB": 1,
     "MMA": 1,
     "Cycling": 1,
+    "Snooker": 1,
     "Other": 1,
 }
-DEFAULT_CANDIDATE_CAP = 2
 DEFAULT_FINAL_CAP = 1
 TOTAL_FINAL_MIN = 8
 TOTAL_FINAL_MAX = 14
@@ -243,11 +245,15 @@ def prefilter(articles: list[Article], skip_reasons: dict[str, int]) -> list[Art
         items = by_sport.get(sport) or []
         if items:
             ordered.append(items[0][1])
-    # Pass B — remaining candidates for depth
+        if len(ordered) >= MAX_AI_CANDIDATES:
+            return ordered
+    # Pass B — remaining candidates for depth (still capped)
     for _, __, sport in sport_rank:
         items = by_sport.get(sport) or []
         for _, article in items[1:]:
             ordered.append(article)
+            if len(ordered) >= MAX_AI_CANDIDATES:
+                return ordered
     return ordered
 
 

@@ -56,6 +56,7 @@ SPORT_ORDER = [
     "Football",
     "Cricket",
     "Tennis",
+    "Snooker",
     "NBA",
     "NFL",
     "F1",
@@ -82,6 +83,7 @@ SPORT_COLORS = {
     "Cricket": 0x1B8737,
     "Football": 0x1E88E5,
     "Tennis": 0xF9A825,
+    "Snooker": 0x1B5E20,
     "Badminton": 0x00897B,
     "Hockey": 0x5E35B1,
     "Athletics": 0x00838F,
@@ -109,6 +111,7 @@ SPORT_EMOJI = {
     "Cricket": "\U0001f3cf",
     "Football": "\u26bd",
     "Tennis": "\U0001f3be",
+    "Snooker": "\U0001f3b1",
     "Badminton": "\U0001f3f8",
     "Hockey": "\U0001f3d1",
     "Athletics": "\U0001f3c3",
@@ -216,7 +219,8 @@ _EVENT_RULES: list[tuple[re.Pattern[str], str]] = [
 _SPORT_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(cricket|odi|t20|test match|wicket|ipl|bcci)\b", re.I), "Cricket"),
     (re.compile(r"\b(football|soccer|premier league|la liga|serie a|bundesliga|champions league|fifa|mls)\b", re.I), "Football"),
-    (re.compile(r"\b(tennis|wimbledon|us open|french open|australian open|atp|wta|china open)\b", re.I), "Tennis"),
+    (re.compile(r"\b(snooker|judd trump|shaun murphy|mark selby|si jiahui|ronnie o'?sullivan)\b", re.I), "Snooker"),
+    (re.compile(r"\b(tennis|wimbledon|us open|french open|australian open|atp|wta)\b", re.I), "Tennis"),
     (re.compile(r"\bbadminton\b", re.I), "Badminton"),
     (re.compile(r"\b(field hockey|ice hockey|nhl|hockey)\b", re.I), "Hockey"),
     (re.compile(r"\b(athletics|marathon|sprint|javelin|shot put)\b", re.I), "Athletics"),
@@ -329,7 +333,7 @@ def fetch_feed_articles(*, bypass_cache: bool = False) -> tuple[list[Article], l
 def _enrich_one(article: Article) -> Article:
     body = article.article_text
     # Skip page fetch when RSS summary already has enough substance.
-    if len(body.split()) >= 55:
+    if len(body.split()) >= 50:
         return reclassify_article(article)
     # Skip enrich for already-cached article page payloads.
     page_key = f"page:{article.url}"

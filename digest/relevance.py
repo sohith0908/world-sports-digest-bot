@@ -15,6 +15,7 @@ SPORT_BASE = {
     "Football": 36,
     "Cricket": 34,
     "Tennis": 30,
+    "Snooker": 22,
     "F1": 28,
     "Golf": 26,
     "Rugby": 26,
