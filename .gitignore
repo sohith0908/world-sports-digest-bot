@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Local runtime data
+digest.log
+digest.db
+posted_urls.json
+*.db-journal
