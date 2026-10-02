@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 import feedparser
 import httpx
 
+from digest.config import get_settings
+from digest.db import feed_cache_get, feed_cache_set
 from digest.logging_util import setup_logging
 from digest.textutil import clean_text
 
@@ -287,20 +289,33 @@ def _parse_feed(sport: str, feed_url: str, raw: bytes) -> list[Article]:
     return articles
 
 
-def _fetch_one_feed(sport: str, feed_url: str) -> tuple[str, str, list[Article] | None]:
+def _fetch_one_feed(
+    sport: str, feed_url: str, *, bypass_cache: bool = False
+) -> tuple[str, str, list[Article] | None]:
+    minutes = get_settings().feed_cache_minutes
+    if not bypass_cache:
+        cached = feed_cache_get(feed_url, max_age_minutes=minutes)
+        if cached is not None:
+            log.debug("feed_cache_hit url=%s", feed_url)
+            return sport, feed_url, _parse_feed(sport, feed_url, cached)
+
     headers = {"User-Agent": USER_AGENT}
     with httpx.Client(headers=headers) as client:
         raw = fetch_with_retries(client, feed_url)
     if raw is None:
         return sport, feed_url, None
+    feed_cache_set(feed_url, raw)
     return sport, feed_url, _parse_feed(sport, feed_url, raw)
 
 
-def fetch_feed_articles() -> tuple[list[Article], list[str]]:
+def fetch_feed_articles(*, bypass_cache: bool = False) -> tuple[list[Article], list[str]]:
     articles: list[Article] = []
     failures: list[str] = []
     with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = [pool.submit(_fetch_one_feed, sport, url) for sport, url in FEEDS]
+        futures = [
+            pool.submit(_fetch_one_feed, sport, url, bypass_cache=bypass_cache)
+            for sport, url in FEEDS
+        ]
         for fut in as_completed(futures):
             sport, feed_url, items = fut.result()
             if items is None:
@@ -313,12 +328,23 @@ def fetch_feed_articles() -> tuple[list[Article], list[str]]:
 
 def _enrich_one(article: Article) -> Article:
     body = article.article_text
-    if len(body.split()) >= 40:
+    # Skip page fetch when RSS summary already has enough substance.
+    if len(body.split()) >= 55:
         return reclassify_article(article)
+    # Skip enrich for already-cached article page payloads.
+    page_key = f"page:{article.url}"
+    from digest.db import cache_get, cache_set
+
+    cached_page = cache_get(page_key, max_age_minutes=180)
+    if cached_page and cached_page.get("text"):
+        article.article_text = clean_text(f"{body} {cached_page['text']}")
+        return reclassify_article(article)
+
     headers = {"User-Agent": USER_AGENT}
     with httpx.Client(headers=headers, timeout=8.0) as client:
         page = fetch_page_text(article.url, client)
         if page:
+            cache_set(page_key, {"text": page})
             body = clean_text(f"{body} {page}")
     article.article_text = body
     return reclassify_article(article)

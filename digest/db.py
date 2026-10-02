@@ -70,6 +70,11 @@ def init_db() -> None:
                 sport TEXT NOT NULL,
                 PRIMARY KEY (day, sport)
             );
+            CREATE TABLE IF NOT EXISTS feed_cache (
+                url TEXT PRIMARY KEY,
+                body BLOB NOT NULL,
+                fetched_at TEXT NOT NULL
+            );
             """
         )
 
@@ -116,13 +121,21 @@ def log_skip(url: str, title: str, reason: str) -> None:
         )
 
 
-def cache_get(key: str) -> dict | None:
+def cache_get(key: str, max_age_minutes: int | None = None) -> dict | None:
     with connect() as conn:
         row = conn.execute(
-            "SELECT payload FROM summary_cache WHERE cache_key = ?", (key,)
+            "SELECT payload, created_at FROM summary_cache WHERE cache_key = ?", (key,)
         ).fetchone()
     if not row:
         return None
+    if max_age_minutes is not None:
+        try:
+            created = datetime.fromisoformat(row["created_at"])
+            age = (datetime.utcnow() - created).total_seconds() / 60.0
+            if age > max_age_minutes:
+                return None
+        except Exception:
+            return None
     try:
         return json.loads(row["payload"])
     except Exception:
@@ -137,6 +150,34 @@ def cache_set(key: str, payload: dict) -> None:
             VALUES (?, ?, ?)
             """,
             (key, json.dumps(payload), datetime.utcnow().isoformat()),
+        )
+
+
+def feed_cache_get(url: str, max_age_minutes: int = 8) -> bytes | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT body, fetched_at FROM feed_cache WHERE url = ?", (url,)
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        fetched = datetime.fromisoformat(row["fetched_at"])
+        age = (datetime.utcnow() - fetched).total_seconds() / 60.0
+        if age > max_age_minutes:
+            return None
+    except Exception:
+        return None
+    return bytes(row["body"])
+
+
+def feed_cache_set(url: str, body: bytes) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO feed_cache (url, body, fetched_at)
+            VALUES (?, ?, ?)
+            """,
+            (url, body, datetime.utcnow().isoformat()),
         )
 
 

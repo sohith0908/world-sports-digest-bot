@@ -10,12 +10,28 @@ from digest.feeds import Article, TZ
 from digest.logging_util import setup_logging
 from digest.quality import is_non_story, title_is_opinion
 from digest.registry import detect_unregistered_events
-from digest.relevance import log_relevance, relevance_score
+from digest.relevance import log_relevance, relevance_score, source_trust_score
 from digest.textutil import clean_text
 
 log = setup_logging()
 
 REJECT_PATH = re.compile(r"/(blog|opinion|fantasy|betting|column)(/|$)", re.I)
+
+# Soft region buckets for worldwide balance in the final digest.
+REGION_SPORTS = {
+    "asia": {
+        "Asian Games",
+        "Cricket",
+        "Badminton",
+        "Hockey",
+        "Kabaddi",
+        "Wrestling",
+        "Boxing",
+        "Athletics",
+    },
+    "europe": {"Football", "Tennis", "F1", "Golf", "Rugby", "Olympics"},
+    "americas": {"NBA", "NFL", "MLB", "MMA"},
+}
 
 # Candidates per sport before AI — keep breadth worldwide.
 CANDIDATE_CAPS: dict[str, int] = {
@@ -115,19 +131,33 @@ def same_event(a: Article, b: Article) -> bool:
 
 
 def dedupe_events(scored: list[tuple[int, Article, dict]]) -> list[tuple[int, Article, dict]]:
+    """Keep the highest-scoring copy; break ties with source trust (BBC/cricinfo > soft ESPN)."""
     kept: list[tuple[int, Article, dict]] = []
     for score, article, parts in scored:
-        dup = False
-        for _, prev, _ in kept:
-            if same_event(article, prev):
+        replaced = False
+        for i, (prev_score, prev, prev_parts) in enumerate(kept):
+            if not same_event(article, prev):
+                continue
+            trust_new = source_trust_score(article.source or article.url)
+            trust_old = source_trust_score(prev.source or prev.url)
+            if score > prev_score or (score == prev_score and trust_new > trust_old):
+                log.info(
+                    "event_dup_prefer title=%s over=%s trust=%s>%s",
+                    article.title[:70],
+                    prev.title[:70],
+                    trust_new,
+                    trust_old,
+                )
+                kept[i] = (score, article, parts)
+            else:
                 log.info(
                     "skip event_dup title=%s kept=%s",
                     article.title[:80],
                     prev.title[:80],
                 )
-                dup = True
-                break
-        if not dup:
+            replaced = True
+            break
+        if not replaced:
             kept.append((score, article, parts))
     return kept
 
@@ -283,9 +313,27 @@ def finalize_by_relevance(pairs: list[tuple[Article, object]]) -> list[object]:
         if not dup:
             unique.append((score, summary, article))
 
-    # Pass 1: one highlight per sport so the world roundup covers what happened.
+    def region_of(sport: str) -> str:
+        for name, sports in REGION_SPORTS.items():
+            if sport in sports:
+                return name
+        return "other"
+
+    # Pass 1a: one story per region that has candidates (US / Europe / Asia balance).
     counts: dict[str, int] = {}
     out: list[Summary] = []
+    regions_hit: set[str] = set()
+    for score, summary, _ in unique:
+        region = region_of(summary.sport)
+        if region in regions_hit or region == "other":
+            continue
+        if summary.sport in counts:
+            continue
+        regions_hit.add(region)
+        counts[summary.sport] = 1
+        out.append(summary)
+
+    # Pass 1b: one highlight per remaining sport.
     for score, summary, _ in unique:
         if summary.sport in counts:
             continue

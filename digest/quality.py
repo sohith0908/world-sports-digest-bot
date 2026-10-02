@@ -24,7 +24,9 @@ REJECT_TITLE = re.compile(
     r"in his own words|exclusive interview|"
     r"sportsworld|playoff picture|projections?|"
     r"breaking down the goalie|guidelines\b|"
-    r"documentary|documentaries"
+    r"documentary|documentaries|"
+    r"urges? .{0,40} improvement|come face to face|face[- ]?off|"
+    r"press conference|news conference"
     r")\b",
     re.I,
 )

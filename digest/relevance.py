@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 
 from digest.feeds import Article
 from digest.logging_util import setup_logging
@@ -8,7 +9,6 @@ from digest.registry import competition_score, stage_score
 
 log = setup_logging()
 
-# Balanced worldwide baselines — India boost is additive, not exclusive.
 SPORT_BASE = {
     "Asian Games": 42,
     "Olympics": 38,
@@ -33,6 +33,20 @@ SPORT_BASE = {
     "Sport": 18,
 }
 
+# Prefer wire/hard-news hosts when ranking / deduping.
+SOURCE_TRUST = {
+    "espncricinfo.com": 18,
+    "cricbuzz.com": 14,
+    "bbc.co.uk": 16,
+    "bbci.co.uk": 16,
+    "thehindu.com": 14,
+    "theguardian.com": 12,
+    "reuters.com": 16,
+    "apnews.com": 14,
+    "espn.com": 6,
+    "skysports.com": 10,
+}
+
 INDIA_RE = re.compile(
     r"\b("
     r"india|indian|bharat|bcci|team india|men in blue|"
@@ -40,6 +54,16 @@ INDIA_RE = re.compile(
     r"neeraj|sindhu|saina|manika|satwik|chirag|mirabai|lakshya|"
     r"lovlina|chikitha|taniparthi|patil|neeru|kynan|"
     r"isl\b|indian super league|asian games"
+    r")\b",
+    re.I,
+)
+
+RESULT_RE = re.compile(
+    r"\b("
+    r"\d+\s*[-–]\s*\d+|"
+    r"won by|beats?|beat|defeated|defeat(?:ed)?|drew|draw|"
+    r"gold|silver|bronze|medal|"
+    r"qualified|knocked out|eliminated|champions?"
     r")\b",
     re.I,
 )
@@ -53,9 +77,27 @@ HARD_NEWS = re.compile(
 
 SOFT_FEATURE = re.compile(
     r"\b(no different|in his own words|exclusive interview|kick-?off is at|"
-    r"too shy for|meet [\w']+:|here'?s why|guide to|storylines?)\b",
+    r"too shy for|meet [\w']+:|here'?s why|guide to|storylines?|"
+    r"urges?|backs?|says?|said|warns?|face off|come face to face)\b",
     re.I,
 )
+
+PRESSER_RE = re.compile(
+    r"\b(press conference|news conference|urges?|backing|backs?|"
+    r"face[- ]?off|come face to face|quips?|slights?)\b",
+    re.I,
+)
+
+
+def source_trust_score(source_or_url: str) -> int:
+    host = source_or_url.lower().removeprefix("www.")
+    if "/" in host or "://" in host:
+        host = urlparse(source_or_url if "://" in source_or_url else f"https://{source_or_url}").netloc.lower()
+        host = host.removeprefix("www.")
+    for key, pts in SOURCE_TRUST.items():
+        if host.endswith(key):
+            return pts
+    return 4
 
 
 def relevance_score(article: Article) -> tuple[int, dict[str, int]]:
@@ -64,7 +106,6 @@ def relevance_score(article: Article) -> tuple[int, dict[str, int]]:
     parts["sport"] = SPORT_BASE.get(article.sport, 18)
 
     india = bool(article.india_relevant) or bool(INDIA_RE.search(text))
-    # Soft India boost so worldwide results still compete.
     parts["india"] = 28 if india else 0
     article.india_relevant = india
 
@@ -77,9 +118,12 @@ def relevance_score(article: Article) -> tuple[int, dict[str, int]]:
             parts["sport"] = SPORT_BASE["Asian Games"]
 
     parts["stage"] = stage_score(text)
-    parts["hard_news"] = 35 if HARD_NEWS.search(text) else 0
-    parts["soft_feature"] = -45 if SOFT_FEATURE.search(text) else 0
-    parts["event_match"] = 20 if article.event_match else 0
+    parts["result"] = 45 if RESULT_RE.search(text) else 0
+    parts["hard_news"] = 30 if HARD_NEWS.search(text) else 0
+    parts["soft_feature"] = -50 if SOFT_FEATURE.search(text) and not RESULT_RE.search(text) else 0
+    parts["presser"] = -35 if PRESSER_RE.search(text) and not RESULT_RE.search(text) else 0
+    parts["event_match"] = 30 if article.event_match else 0
+    parts["source"] = source_trust_score(article.source or article.url)
 
     try:
         parts["recency"] = int(article.publish_date.timestamp() % 10_000) // 1000
@@ -90,7 +134,7 @@ def relevance_score(article: Article) -> tuple[int, dict[str, int]]:
 
 
 def log_relevance(article: Article, score: int, parts: dict[str, int]) -> None:
-    log.info(
+    log.debug(
         "relevance sport=%s score=%s india=%s competition=%s parts=%s title=%s",
         article.sport,
         score,

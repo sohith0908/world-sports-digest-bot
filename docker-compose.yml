@@ -1,0 +1,9 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./digest.db:/app/digest.db
+      - ./digest.log:/app/digest.log

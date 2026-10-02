@@ -7,6 +7,7 @@ from datetime import datetime
 import discord
 
 from digest.ai import Summary
+from digest.config import get_settings
 from digest.feeds import SPORT_COLORS, SPORT_EMOJI, TZ
 from digest.textutil import clean_text
 from digest.world_roundup import build_world_highlights_text, sports_covered
@@ -41,7 +42,7 @@ def group_summaries(summaries: list[Summary]) -> dict[str, list[Summary]]:
 
 
 def maybe_spoiler(text: str) -> str:
-    if os.getenv("SPOILER_SCORES", "").strip() != "1":
+    if not get_settings().spoiler_scores and os.getenv("SPOILER_SCORES", "").strip() != "1":
         return text
 
     def repl(m):
@@ -66,6 +67,8 @@ def _story_block(item: Summary) -> str:
     block = [f"**{headline}**", key_fact]
     if why:
         block.append(f"Why it matters: {why}")
+    if item.hinglish:
+        block.append(f"_{clean_text(item.hinglish)}_")
     block.append(f"[Read more]({item.url})")
     return "\n".join(block)
 
@@ -173,28 +176,38 @@ def build_india_today_embed(summaries: list[Summary]) -> discord.Embed | None:
     )
 
 
-def build_embeds(summaries: list[Summary], day: datetime | None = None) -> tuple[str, list[discord.Embed]]:
+def build_embeds(
+    summaries: list[Summary],
+    day: datetime | None = None,
+    *,
+    thread_details: bool | None = None,
+) -> tuple[str, list[discord.Embed], list[discord.Embed]]:
+    """
+    Returns (header, main_embeds, detail_embeds).
+    When thread_details is True, sport sections go to detail_embeds for a thread.
+    """
     day = day or datetime.now(TZ)
-    embeds: list[discord.Embed] = []
+    use_thread = get_settings().thread_details if thread_details is None else thread_details
+    main: list[discord.Embed] = []
+    details: list[discord.Embed] = []
 
     world = build_world_highlights_embed(summaries)
     if world:
-        embeds.append(world)
+        main.append(world)
 
     medal = build_medal_tally_embed(summaries)
     if medal:
-        embeds.append(medal)
+        main.append(medal)
     india = build_india_today_embed(summaries)
     if india:
-        embeds.append(india)
+        main.append(india)
 
     grouped = group_summaries(summaries)
-    # Leave room: world + optional medal/india already used slots (max 10 embeds).
-    remaining = max(0, 10 - len(embeds))
-    for sport, items in list(grouped.items())[:remaining]:
+    sport_embeds: list[discord.Embed] = []
+    for sport, items in grouped.items():
         description = "\n\n".join(_story_block(item) for item in items)
         emoji = SPORT_EMOJI.get(sport, "\U0001f3c6")
-        embeds.append(
+        sport_embeds.append(
             _make_embed(
                 f"{emoji} {sport.upper()}",
                 description,
@@ -202,15 +215,24 @@ def build_embeds(summaries: list[Summary], day: datetime | None = None) -> tuple
             )
         )
 
-    embeds = embeds[:10]
+    if use_thread:
+        # Channel: overview sections only. Thread: per-sport detail.
+        details = sport_embeds
+    else:
+        remaining = max(0, 10 - len(main))
+        main.extend(sport_embeds[:remaining])
+
+    main = main[:10]
+    details = details[:10]
     header_sports = ["World Highlights"] if world else []
     if medal:
         header_sports.append("Medal Tally")
     if india:
         header_sports.append("India Today")
-    header_sports.extend(list(grouped.keys())[:remaining])
+    header_sports.extend(list(grouped.keys()))
     header = build_header(day, len(summaries), header_sports)
-    if embeds:
-        embeds[-1].timestamp = day
-        embeds[-1].set_footer(text=f"World sports brief · {day:%d %b %Y} IST")
-    return header, embeds
+    footer_target = details[-1] if details else (main[-1] if main else None)
+    if footer_target:
+        footer_target.timestamp = day
+        footer_target.set_footer(text=f"World sports brief · {day:%d %b %Y} IST")
+    return header, main, details

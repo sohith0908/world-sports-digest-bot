@@ -7,10 +7,12 @@ from digest.ai import Summary, call_gemini_raw, call_openai_raw
 from digest.db import cache_get, cache_set
 from digest.feeds import Article
 from digest.logging_util import setup_logging
-from digest.quality import validate_summary_quality, why_is_weak
+from digest.quality import SENSITIVE, validate_summary_quality, why_is_weak
 from digest.textutil import clean_text
 
 log = setup_logging()
+
+NEEDS_AI_FACTCHECK = re.compile(r"\b\d{2,}|\d+\s*[-–]\s*\d+", re.I)
 
 FACTCHECK_PROMPT = """You verify sports digest lines against article text only.
 
@@ -110,11 +112,18 @@ def factcheck_summary(article: Article, summary: Summary) -> tuple[Summary | Non
         competition=summary.competition,
     )
 
-    result = ai_factcheck(article, checked)
-    if result is None:
-        verdict, unsupported = local_factcheck(article, checked)
+    claim_blob = f"{headline} {key_fact} {why or ''}"
+    needs_ai = bool(NEEDS_AI_FACTCHECK.search(claim_blob) or SENSITIVE.search(claim_blob) or flags)
+    if needs_ai:
+        result = ai_factcheck(article, checked)
+        if result is None:
+            verdict, unsupported = local_factcheck(article, checked)
+        else:
+            verdict, unsupported = result
     else:
-        verdict, unsupported = result
+        # Fast path: no scores/sensitive claims — local lexical check only.
+        verdict, unsupported = local_factcheck(article, checked)
+        log.debug("factcheck_fast_path url=%s", article.url)
 
     log.info(
         "factcheck url=%s verdict=%s unsupported=%s flags=%s",
